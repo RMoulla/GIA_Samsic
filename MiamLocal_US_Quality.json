@@ -1,0 +1,142 @@
+{
+  "name": "MiamLocal — Audit User Story (Form)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Audit User Story — MiamLocal",
+        "formDescription": "Collez le titre et la description d'une User Story du backlog MiamLocal. L'IA l'evaluera sur 5 criteres (persona, format, description, criteres d'acceptation, granularite) et produira un diagnostic.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Titre de la User Story",
+              "placeholder": "Ex: En tant que client, je veux filtrer les restaurants...",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Description",
+              "fieldType": "textarea",
+              "placeholder": "Collez ici la description et les criteres d'acceptation de la story",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "134f5893-a0ed-400d-a567-53be54279d6e",
+      "name": "Formulaire US",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        160
+      ],
+      "webhookId": "5b0d2db7-84d0-4308-b865-2afa347a6991"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, messages: [{ role: 'system', content: 'Tu es un assistant qualite pour le backlog du produit MiamLocal (livraison de repas de quartier, 3 personas : client, restaurateur, livreur). On te soumet une User Story. Evalue-la sur 5 criteres, note de 0 a 2 chacun (0 = absent ou inutilisable, 1 = present mais insuffisant, 2 = conforme). CRITERES : 1. PERSONA : Le persona est-il explicite et precis ? 2. FORMAT : La story suit-elle le format En tant que... je veux... afin de... ? 3. DESCRIPTION : La description est-elle suffisante pour comprendre le besoin ? 4. CRITERES D ACCEPTATION : Sont-ils presents et testables ? 5. GRANULARITE : La story est-elle realisable en un sprint ? Reponds UNIQUEMENT au format JSON suivant (pas de texte avant ni apres) : { \"score_total\": <somme sur 10>, \"details\": { \"persona\": { \"note\": X, \"commentaire\": \"...\" }, \"format\": { \"note\": X, \"commentaire\": \"...\" }, \"description\": { \"note\": X, \"commentaire\": \"...\" }, \"criteres_acceptation\": { \"note\": X, \"commentaire\": \"...\" }, \"granularite\": { \"note\": X, \"commentaire\": \"...\" } }, \"verdict\": \"OK|A_RETRAVAILLER|BLOQUANT\", \"suggestions\": [\"suggestion 1\", \"suggestion 2\"] }. Regles de verdict : Score 8-10 = OK, Score 4-7 = A_RETRAVAILLER, Score 0-3 = BLOQUANT' }, { role: 'user', content: 'Titre : ' + $json['Titre de la User Story'] + '\\nDescription : ' + ($json['Description'] || '(vide)') }] }) }}",
+        "options": {}
+      },
+      "id": "209558ab-d979-407a-9a08-9371f8382f00",
+      "name": "Appel API LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        944,
+        160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "F4O0y3AEZEwDTtBR",
+          "name": "Header Auth account"
+        },
+        "openAiApi": {
+          "id": "ayExhHPdEs7yxHfH",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parser la reponse du LLM\nconst response = $input.first().json;\nconst titre = $('Formulaire US').first().json['Titre de la User Story'];\n\nlet content = '';\ntry {\n  content = response.choices[0].message.content;\n} catch (e) {\n  return [{ json: { resultText: '<h2>Erreur</h2><p>Pas de reponse du LLM. Verifiez la cle API.</p>' } }];\n}\n\n// Nettoyer et parser le JSON\nlet cleaned = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\nlet evaluation;\ntry {\n  evaluation = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { resultText: '<h2>Erreur de parsing</h2><p>Le LLM n\\'a pas renvoye du JSON valide :</p><pre>' + cleaned.substring(0, 500) + '</pre>' } }];\n}\n\n// Determiner emoji et couleur du verdict\nlet emoji = '⚠️';\nlet couleur = '#f59e0b';\nif (evaluation.verdict === 'OK') { emoji = '✅'; couleur = '#22c55e'; }\nelse if (evaluation.verdict === 'BLOQUANT') { emoji = '🔴'; couleur = '#ef4444'; }\n\n// Construire le tableau des details\nconst lignes = Object.entries(evaluation.details || {})\n  .map(([critere, val]) => {\n    const barreWidth = (val.note / 2) * 100;\n    return `<tr>\n      <td style=\"padding:8px 12px;font-weight:600;text-transform:capitalize;\">${critere.replace('_', ' ')}</td>\n      <td style=\"padding:8px 12px;text-align:center;\"><strong>${val.note}/2</strong></td>\n      <td style=\"padding:8px 12px;\">\n        <div style=\"background:#e5e7eb;border-radius:4px;height:8px;width:100px;\">\n          <div style=\"background:${couleur};border-radius:4px;height:8px;width:${barreWidth}px;\"></div>\n        </div>\n      </td>\n      <td style=\"padding:8px 12px;color:#555;\">${val.commentaire}</td>\n    </tr>`;\n  }).join('');\n\nconst suggestions = (evaluation.suggestions || [])\n  .map(s => `<li style=\"margin-bottom:4px;\">${s}</li>`)\n  .join('');\n\nconst html = `\n<div style=\"font-family:system-ui,sans-serif;max-width:700px;margin:0 auto;\">\n  <h2 style=\"margin-bottom:4px;\">${emoji} Diagnostic : ${titre}</h2>\n  <p style=\"font-size:1.3em;color:${couleur};font-weight:700;\">Score : ${evaluation.score_total}/10 — ${evaluation.verdict}</p>\n  <table style=\"width:100%;border-collapse:collapse;margin:16px 0;\">\n    <thead>\n      <tr style=\"background:#f3f4f6;\">\n        <th style=\"padding:8px 12px;text-align:left;\">Critere</th>\n        <th style=\"padding:8px 12px;\">Note</th>\n        <th style=\"padding:8px 12px;\">Barre</th>\n        <th style=\"padding:8px 12px;text-align:left;\">Commentaire</th>\n      </tr>\n    </thead>\n    <tbody>${lignes}</tbody>\n  </table>\n  ${suggestions.length > 0 ? '<h3>Suggestions</h3><ul>' + suggestions + '</ul>' : ''}\n</div>\n`;\n\nreturn [{ json: { resultText: html } }];"
+      },
+      "id": "9d20480c-4825-4733-a0f7-dd28d8c60a5c",
+      "name": "Formater le resultat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.resultText }}"
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1424,
+        160
+      ],
+      "id": "0437aadb-fd0c-4ebd-baba-a8a29a11a4f8",
+      "name": "Form",
+      "webhookId": "6930547f-2fb1-44cc-8f07-c9674d20b41e"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Formulaire US": {
+      "main": [
+        [
+          {
+            "node": "Appel API LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appel API LLM": {
+      "main": [
+        [
+          {
+            "node": "Formater le resultat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater le resultat": {
+      "main": [
+        [
+          {
+            "node": "Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a96b1d74-563e-4756-92dd-e5a78c3f6ea9",
+  "meta": {
+    "instanceId": "f0b2d8dc51785e1fe3113bfa3ab7f096ee9282c8fb2ae153d975c48bd48c9b49"
+  },
+  "id": "NBpgqW2Jubhv8uyh",
+  "tags": []
+}
